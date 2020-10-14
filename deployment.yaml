@@ -1,0 +1,205 @@
+version: "2.1"
+services:
+  erxes:
+    image: erxes/erxes:0.17.6
+    container_name: erxes
+    restart: unless-stopped
+    environment:
+      # erxes
+      REACT_APP_CDN_HOST: http://localhost:3200
+      REACT_APP_API_URL: http://localhost:3300
+      REACT_APP_API_SUBSCRIPTION_URL: ws://localhost:3300/subscriptions
+      NGINX_HOST: localhost
+    ports:
+      - "3000:80"
+    networks:
+      - erxes-net
+
+  erxes-api:
+    image: erxes/erxes-api:0.17.6
+    container_name: erxes-api
+    restart: unless-stopped
+    environment:
+      # erxes-api
+      PORT: "3300"
+      NODE_ENV: production
+      DEBUG: "erxes-api:*"
+      JWT_TOKEN_SECRET: token
+      # public urls
+      MAIN_APP_DOMAIN: http://localhost:3000
+      WIDGETS_DOMAIN: http://localhost:3200
+      INTEGRATIONS_API_DOMAIN: http://localhost:3400
+      # non public urls
+      CRONS_API_DOMAIN: http://erxes-crons:3600
+      WORKERS_API_DOMAIN: http://erxes-workers:3700
+      LOGS_API_DOMAIN: http://erxes-logger:3800
+      ENGAGES_API_DOMAIN: http://erxes-engages:3900
+      # MongoDB
+      MONGO_URL: mongodb://mongo/erxes
+      # Elasticsearch
+      ELASTICSEARCH_URL: http://elasticsearch
+    ports:
+      - "3300:3300"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - erxes-net
+
+  erxes-crons:
+    image: erxes/erxes-api:0.17.6
+    container_name: erxes-crons
+    entrypoint: ["node", "--max_old_space_size=8192", "dist/cronJobs"]
+    restart: unless-stopped
+    environment:
+      # erxes-crons
+      PORT_CRONS: "3600"
+      NODE_ENV: production
+      PROCESS_NAME: crons
+      DEBUG: "erxes-crons:*"
+      # MongoDB
+      MONGO_URL: mongodb://mongo/erxes
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - erxes-net
+
+  erxes-workers:
+    image: erxes/erxes-api:0.17.6
+    container_name: erxes-workers
+    entrypoint:
+      [
+        "node",
+        "--max_old_space_size=8192",
+        "--experimental-worker",
+        "dist/workers",
+      ]
+    restart: unless-stopped
+    environment:
+      # erxes-workers
+      PORT_WORKERS: "3700"
+      NODE_ENV: production
+      DEBUG: "erxes-workers:*"
+      JWT_TOKEN_SECRET: token
+      # MongoDB
+      MONGO_URL: mongodb://mongo/erxes
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - erxes-net
+
+  erxes-widgets:
+    image: erxes/erxes-widgets:0.17.6
+    container_name: erxes-widgets
+    restart: unless-stopped
+    environment:
+      # erxes-widgets
+      PORT: "3200"
+      ROOT_URL: http://localhost:3200
+      API_URL: http://localhost:3300
+      API_SUBSCRIPTIONS_URL: ws://localhost:3300/subscriptions
+    ports:
+      - "3200:3200"
+    networks:
+      - erxes-net
+
+  erxes-engages:
+    image: erxes/erxes-engages-email-sender:0.17.6
+    container_name: erxes-engages
+    restart: unless-stopped
+    environment:
+      PORT: "3900"
+      NODE_ENV: production
+      DEBUG: "erxes-engages:*"
+      # public urls
+      MAIN_API_DOMAIN: http://localhost:3300
+      # MongoDB
+      MONGO_URL: mongodb://mongo/erxes_engages
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - erxes-net
+
+  erxes-logger:
+    image: erxes/erxes-logger:0.17.6
+    container_name: erxes-logger
+    restart: unless-stopped
+    environment:
+      PORT: "3800"
+      DEBUG: "erxes-logs:*"
+      # MongoDB
+      MONGO_URL: mongodb://mongo/erxes_logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - erxes-net
+
+  erxes-integrations:
+    image: erxes/erxes-integrations:0.17.6
+    container_name: erxes-integrations
+    restart: unless-stopped
+    environment:
+      PORT: "3400"
+      NODE_ENV: production
+      DEBUG: "erxes-integrations:*"
+      # public urls
+      DOMAIN: http://localhost:3400
+      MAIN_APP_DOMAIN: http://localhost:3000
+      MAIN_API_DOMAIN: http://localhost:3300
+      # non public urls
+      # MongoDB
+      MONGO_URL: mongodb://mongo/erxes_integrations
+    ports:
+      - "3400:3400"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - erxes-net
+
+  mongo:
+    image: mongo:3.6.13
+    container_name: mongo
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'rs.initiate().ok' | mongo localhost:27017/test?replicaSet=rs0 --quiet
+      interval: 2s
+      timeout: 2s
+      retries: 200
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    networks:
+      - erxes-net
+    # MongoDB data will be saved into ./mongo-data folder.
+    volumes:
+      - ./mongo-data:/data/db
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.5.2
+    container_name: elasticsearch
+    environment:
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - erxes-net
+    healthcheck:
+      test: curl -s http://localhost:9200 >/dev/null; if [[ $$? == 52 ]]; then echo 0; else echo 1; fi
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+networks:
+  erxes-net:
+    driver: bridge
