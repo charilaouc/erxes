@@ -1,0 +1,10 @@
+stages:
+- name: setup docker
+  steps:
+  - runScriptConfig:
+      image: gcc:latest
+      shellScript: |-
+        sudo apt-get remove docker docker-engine docker.io containerd runc
+        sudo apt-get update
+timeout: 60
+notification: {}
